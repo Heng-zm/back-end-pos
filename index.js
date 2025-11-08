@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
 const db = require('./database.js');
 
 const app = express();
@@ -9,7 +11,9 @@ const PORT = 5000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(helmet());
+app.use(express.json({ limit: '1mb' }));
+app.use(compression());
 
 // Create an HTTP server from the Express app to attach the WebSocket server
 const server = http.createServer(app);
@@ -17,7 +21,6 @@ const wss = new WebSocket.Server({ server });
 
 // Function to broadcast a message to all connected WebSocket clients
 const broadcast = (data) => {
-    console.log("Broadcasting update:", data);
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify(data));
@@ -37,6 +40,7 @@ app.get('/api/menu', (req, res) => {
     const sql = `SELECT mi.*, c.name as category_name FROM menu_items mi JOIN categories c ON mi.category_id = c.id ORDER BY mi.id`;
     db.all(sql, [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
+        res.set('Cache-Control', 'public, max-age=60');
         res.json({ data: rows });
     });
 });
@@ -45,36 +49,80 @@ app.get('/api/menu', (req, res) => {
 app.get('/api/categories', (req, res) => {
     db.all("SELECT * FROM categories ORDER BY id", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
+        res.set('Cache-Control', 'public, max-age=60');
         res.json({ data: rows });
     });
 });
 
-// GET: Fetch all non-completed/non-canceled orders
+// GET: Fetch all non-completed/non-canceled orders (paginated + aggregated)
 app.get('/api/live-orders', (req, res) => {
-    const sql = "SELECT * FROM orders WHERE status != 'Completed' AND status != 'Canceled' ORDER BY created_at DESC";
-    db.all(sql, [], (err, orders) => {
-        if (err || !orders || orders.length === 0) return res.json({ data: [] });
-        const promises = orders.map(order => new Promise((resolve, reject) => {
-            const itemSql = "SELECT mi.*, oi.quantity FROM order_items oi JOIN menu_items mi ON oi.menu_item_id = mi.id WHERE oi.order_id = ?";
-            db.all(itemSql, [order.id], (e, items) => e ? reject(e) : resolve({ ...order, items }));
-        }));
-        Promise.all(promises).then(results => res.json({ data: results })).catch(error => res.status(500).json({ error: error.message }));
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const countSql = "SELECT COUNT(*) as total FROM orders WHERE status != 'Completed' AND status != 'Canceled'";
+    const dataSql = `
+        SELECT o.*, 
+               json_group_array(
+                    json_object(
+                        'id', mi.id,
+                        'name', mi.name,
+                        'price', mi.price,
+                        'quantity', oi.quantity
+                    )
+               ) as items
+        FROM (
+            SELECT * FROM orders 
+            WHERE status != 'Completed' AND status != 'Canceled'
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        ) o
+        LEFT JOIN order_items oi ON oi.order_id = o.id
+        LEFT JOIN menu_items mi ON mi.id = oi.menu_item_id
+        GROUP BY o.id
+        ORDER BY o.created_at DESC
+    `;
+    db.get(countSql, [], (cntErr, cntRow) => {
+        if (cntErr) return res.status(500).json({ error: cntErr.message });
+        db.all(dataSql, [limit, offset], (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            const data = rows.map(r => ({ ...r, items: JSON.parse(r.items || '[]').filter(i => i && i.name) }));
+            res.set('X-Total-Count', String(cntRow?.total || 0));
+            res.json({ data });
+        });
     });
 });
 
-// GET: Fetch all transaction history
+// GET: Fetch all transaction history (paginated + aggregated)
 app.get('/api/history', (req, res) => {
-    const sql = `
-        SELECT th.*, json_group_array(json_object('name', mi.name, 'quantity', ti.quantity, 'price_at_sale', ti.price_at_sale)) as items
-        FROM transaction_history th
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const countSql = "SELECT COUNT(*) as total FROM transaction_history";
+    const dataSql = `
+        SELECT th.*, 
+               json_group_array(
+                   json_object(
+                       'name', mi.name, 
+                       'quantity', ti.quantity, 
+                       'price_at_sale', ti.price_at_sale
+                   )
+               ) as items
+        FROM (
+            SELECT * FROM transaction_history 
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        ) th
         LEFT JOIN transaction_items ti ON ti.transaction_history_id = th.id
         LEFT JOIN menu_items mi ON mi.id = ti.menu_item_id
-        GROUP BY th.id ORDER BY th.created_at DESC
+        GROUP BY th.id
+        ORDER BY th.created_at DESC
     `;
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        const results = rows.map(row => ({ ...row, items: JSON.parse(row.items || '[]').filter(i => i.name) }));
-        res.json({ data: results });
+    db.get(countSql, [], (cntErr, cntRow) => {
+        if (cntErr) return res.status(500).json({ error: cntErr.message });
+        db.all(dataSql, [limit, offset], (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            const results = rows.map(row => ({ ...row, items: JSON.parse(row.items || '[]').filter(i => i && i.name) }));
+            res.set('X-Total-Count', String(cntRow?.total || 0));
+            res.json({ data: results });
+        });
     });
 });
 
