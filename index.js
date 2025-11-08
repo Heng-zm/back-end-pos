@@ -21,8 +21,9 @@ const ALLOWED_REGEX = ALLOWED_ORIGINS.map(pat => {
 });
 
 // Middleware
-app.use(cors({
-    origin: (origin, callback) => {
+const ALLOW_ALL_ORIGINS = ((process.env.ALLOW_ALL_ORIGINS || '').toLowerCase() === 'true') || ((process.env.ALLOW_ALL_ORIGINS || '') === '1');
+const corsOptions = {
+    origin: ALLOW_ALL_ORIGINS ? true : (origin, callback) => {
         // Allow non-browser requests (no Origin) and all in non-production
         if (!origin || NODE_ENV !== 'production') return callback(null, true);
         const ok = ALLOWED_REGEX.some(rx => rx.test(origin));
@@ -31,9 +32,10 @@ app.use(cors({
     },
     credentials: true,
     optionsSuccessStatus: 204
-}));
+};
+app.use(cors(corsOptions));
 // Respond to preflight requests
-app.options('*', cors());
+app.options('*', cors(corsOptions));
 app.use(helmet());
 app.use(express.json({ limit: '1mb' }));
 app.use(compression());

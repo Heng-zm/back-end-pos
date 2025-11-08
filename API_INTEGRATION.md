@@ -509,6 +509,12 @@ ALLOWED_ORIGINS="https://front-end-pos-pi.vercel.app,https://back-end-pos.onrend
 ALLOWED_ORIGINS="https://front-end-pos-pi.vercel.app,https://front-end-pos-pi-*.vercel.app"
 ```
 
+- Allow ALL origins (temporary troubleshooting only):
+```bash
+ALLOW_ALL_ORIGINS=true  # or 1
+```
+This reflects the request origin and enables credentials for any origin.
+
 If `ALLOWED_ORIGINS` is not set, defaults include `https://front-end-pos-pi.vercel.app`.
 
 ### Issue 1: CORS Errors
