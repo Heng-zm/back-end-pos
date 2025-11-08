@@ -10,14 +10,23 @@ const db = require('./database.js');
 const app = express();
 const PORT = process.env.PORT || 5000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://front-end-pos-pi.vercel.app,https://back-end-pos.onrender.com,https://your-frontend-domain.com')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
 
 // Middleware
 app.use(cors({
-    origin: NODE_ENV === 'production' 
-        ? ['https://back-end-pos.onrender.com', 'https://your-frontend-domain.com']
-        : '*',
+    origin: (origin, callback) => {
+        // Allow non-browser requests (no Origin) and all in non-production
+        if (!origin || NODE_ENV !== 'production') return callback(null, true);
+        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+        return callback(new Error('Not allowed by CORS'));
+    },
     credentials: true
 }));
+// Respond to preflight requests
+app.options('*', cors());
 app.use(helmet());
 app.use(express.json({ limit: '1mb' }));
 app.use(compression());

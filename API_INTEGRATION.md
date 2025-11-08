@@ -495,6 +495,15 @@ npm start
 
 ## Common Integration Issues
 
+### Configure CORS for Production
+Backend only allows requests from specific origins in production. Set `ALLOWED_ORIGINS` (comma-separated) in backend environment, e.g.:
+
+```bash
+ALLOWED_ORIGINS="https://front-end-pos-pi.vercel.app,https://back-end-pos.onrender.com"
+```
+
+If this is not set, defaults include `https://front-end-pos-pi.vercel.app`.
+
 ### Issue 1: CORS Errors
 **Problem:** Frontend can't connect to backend
 **Solution:** Check CORS configuration in backend `index.js`:
