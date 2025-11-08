@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
@@ -7,10 +8,16 @@ const compression = require('compression');
 const db = require('./database.js');
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: NODE_ENV === 'production' 
+        ? ['https://back-end-pos.onrender.com', 'https://your-frontend-domain.com']
+        : '*',
+    credentials: true
+}));
 app.use(helmet());
 app.use(express.json({ limit: '1mb' }));
 app.use(compression());
@@ -34,6 +41,27 @@ wss.on('connection', ws => {
 });
 
 // --- API ROUTES ---
+
+// Root route
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'POS System Backend API',
+        version: '1.0.0',
+        status: 'running',
+        endpoints: {
+            menu: '/api/menu',
+            categories: '/api/categories',
+            orders: '/api/live-orders',
+            history: '/api/history',
+            notifications: '/api/notifications'
+        }
+    });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
 
 // GET: Fetch all menu items with their category names
 app.get('/api/menu', (req, res) => {
@@ -122,6 +150,41 @@ app.get('/api/history', (req, res) => {
             const results = rows.map(row => ({ ...row, items: JSON.parse(row.items || '[]').filter(i => i && i.name) }));
             res.set('X-Total-Count', String(cntRow?.total || 0));
             res.json({ data: results });
+        });
+    });
+});
+
+// --- NOTIFICATION ROUTES ---
+// GET: List notifications (paginated)
+app.get('/api/notifications', (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const countSql = 'SELECT COUNT(*) as total FROM notifications';
+    const dataSql = `SELECT * FROM notifications ORDER BY datetime(created_at) DESC LIMIT ? OFFSET ?`;
+    db.get(countSql, [], (cntErr, cntRow) => {
+        if (cntErr) return res.status(500).json({ error: cntErr.message });
+        db.all(dataSql, [limit, offset], (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.set('X-Total-Count', String(cntRow?.total || 0));
+            res.json({ data: rows });
+        });
+    });
+});
+
+// POST: Create and broadcast a notification
+// Body: { level?: 'info'|'success'|'warning'|'error', message: string }
+app.post('/api/notifications', (req, res) => {
+    const level = (req.body.level || 'info').toString();
+    const message = (req.body.message || '').toString().trim();
+    if (!message) return res.status(400).json({ error: 'message is required' });
+
+    db.run('INSERT INTO notifications(level, message) VALUES(?, ?)', [level, message], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        const id = this.lastID;
+        db.get('SELECT * FROM notifications WHERE id = ?', [id], (e, row) => {
+            if (e || !row) return res.status(201).json({ id, level, message });
+            broadcast({ type: 'NOTIFICATION', level: row.level, message: row.message, id: row.id, created_at: row.created_at });
+            res.status(201).json({ data: row });
         });
     });
 });

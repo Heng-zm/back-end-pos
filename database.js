@@ -1,7 +1,7 @@
 const sqlite3 = require('sqlite3').verbose();
 const { menuItemsData, categoriesData } = require('./mockData');
 
-const DB_SOURCE = "pos-database.db";
+const DB_SOURCE = process.env.DB_SOURCE || "pos-database.db";
 
 const db = new sqlite3.Database(DB_SOURCE, (err) => {
     if (err) { console.error(err.message); throw err; }
@@ -21,6 +21,7 @@ const db = new sqlite3.Database(DB_SOURCE, (err) => {
         db.run(`CREATE TABLE IF NOT EXISTS order_items (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER, menu_item_id INTEGER, quantity INTEGER NOT NULL, FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE, FOREIGN KEY (menu_item_id) REFERENCES menu_items (id))`);
         db.run(`CREATE TABLE IF NOT EXISTS transaction_history (id INTEGER PRIMARY KEY AUTOINCREMENT, transaction_uid TEXT NOT NULL UNIQUE, order_uid TEXT, customer_name TEXT, table_number INTEGER, total REAL NOT NULL, tax REAL NOT NULL, subtotal REAL NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);
         db.run(`CREATE TABLE IF NOT EXISTS transaction_items (id INTEGER PRIMARY KEY AUTOINCREMENT, transaction_history_id INTEGER, menu_item_id INTEGER, quantity INTEGER NOT NULL, price_at_sale REAL NOT NULL, FOREIGN KEY (transaction_history_id) REFERENCES transaction_history (id) ON DELETE CASCADE, FOREIGN KEY (menu_item_id) REFERENCES menu_items (id))`);
+        db.run(`CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`);
 
         // Indexes
         db.run(`CREATE INDEX IF NOT EXISTS idx_orders_status_created_at ON orders(status, created_at)`);
@@ -28,6 +29,7 @@ const db = new sqlite3.Database(DB_SOURCE, (err) => {
         db.run(`CREATE INDEX IF NOT EXISTS idx_transaction_items_tx_id ON transaction_items(transaction_history_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_menu_items_category_id ON menu_items(category_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_transaction_history_created_at ON transaction_history(created_at)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)`);
     });
 });
 
