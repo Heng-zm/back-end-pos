@@ -14,16 +14,23 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'https://front-end-pos-p
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
+const ALLOWED_REGEX = ALLOWED_ORIGINS.map(pat => {
+    // Turn wildcard patterns into regex, escape regex specials first, then replace * with .*
+    const esc = pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('^' + esc.replace(/\\\*/g, '.*').replace(/\*/g, '.*') + '$');
+});
 
 // Middleware
 app.use(cors({
     origin: (origin, callback) => {
         // Allow non-browser requests (no Origin) and all in non-production
         if (!origin || NODE_ENV !== 'production') return callback(null, true);
-        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+        const ok = ALLOWED_REGEX.some(rx => rx.test(origin));
+        if (ok) return callback(null, true);
         return callback(new Error('Not allowed by CORS'));
     },
-    credentials: true
+    credentials: true,
+    optionsSuccessStatus: 204
 }));
 // Respond to preflight requests
 app.options('*', cors());
@@ -53,10 +60,16 @@ wss.on('connection', ws => {
 
 // Root route
 app.get('/', (req, res) => {
+    const xfProto = (req.headers['x-forwarded-proto'] || '').toString().split(',')[0].trim();
+    const isHttps = xfProto ? xfProto === 'https' : !!req.secure;
+    const host = req.get('host');
+    const wsUrl = `${isHttps ? 'wss' : 'ws'}://${host}`;
+
     res.json({ 
         message: 'POS System Backend API',
         version: '1.0.0',
         status: 'running',
+        ws: wsUrl,
         endpoints: {
             menu: '/api/menu',
             categories: '/api/categories',
